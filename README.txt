@@ -1,6 +1,6 @@
 # ESP32 LIN Protocol Driver
 
-Professional-grade Local Interconnect Network (LIN) Frame-Layer Implementation for ESP32 microcontrollers using the ESP-IDF framework. Supports both master and slave operation with full thread-safety, event-driven architecture, and RTOS integration.
+Local Interconnect Network (LIN) Frame-Layer Implementation for ESP32 microcontrollers using the ESP-IDF framework. Supports both master and slave operation with full thread-safety, event-driven architecture, and RTOS integration.
 
 ![ESP32 LIN Circuit](https://img.shields.io/badge/Platform-ESP32-blue) ![Framework](https://img.shields.io/badge/Framework-ESP--IDF-green) ![Protocol](https://img.shields.io/badge/Protocol-LIN%202.x-orange)
 
@@ -592,3 +592,4 @@ This project is open-source. Users are free to modify and distribute as needed.
 **Author:** Jayanth Sinnakavadi Balan  
 **Contact:** jayanthsb.005@gmail.com  
 **Repository:** [github.com/JayanthBalan/LIN-Protocol-Device-Driver](https://github.com/JayanthBalan/LIN-Protocol-Device-Driver.git)
+
