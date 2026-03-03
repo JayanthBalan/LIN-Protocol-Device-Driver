@@ -24,13 +24,14 @@ void lin_slave_uart_2(void*);
 
 //Function Prototypes
 static uint8_t parity_calc(uint8_t);
-static esp_err_t uart_init(uint16_t, uint8_t, uart_port_t);
+static esp_err_t uart_init(uint32_t, uint8_t, uart_port_t);
 static esp_err_t uart_switch(bool, uint8_t, uart_port_t);
 static uint8_t checksum_classic(uint8_t, uint8_t*);
 static uint8_t checksum_enhanced(uint8_t, uint8_t*);
 static inline uint8_t pid_lut(uint8_t);
-static void lin_slave_fsm_2(uint8_t);
-static void lin_slave_fsm_1(uint8_t);
+static void lin_slave_fsm(uint8_t, bool);
+void lin_rmt_break_rx_init(gpio_num_t, uint32_t);
+void lin_rmt_check_break(uint32_t);
 
 
 static uint8_t parity_calc(uint8_t id) {
@@ -87,7 +88,7 @@ esp_err_t lin_slave_register(uint8_t id, uint8_t len, bool type, uart_port_t uar
     return ESP_OK;
 }
 
-static esp_err_t uart_init(uint16_t baud_rate, uint8_t lin_pin, uart_port_t uart_num)
+static esp_err_t uart_init(uint32_t baud_rate, uint8_t lin_pin, uart_port_t uart_num)
 {
     esp_err_t ret;
     uart_config_t config = {
@@ -137,6 +138,9 @@ static esp_err_t uart_init(uint16_t baud_rate, uint8_t lin_pin, uart_port_t uart
     uart_set_mode(uart_num, UART_MODE_UART);
     uart_set_rx_full_threshold(uart_num, 1);
 
+    uart_enable_intr_mask(uart_num, UART_INTR_BRK_DET);
+    uart_enable_intr_mask(uart_num, UART_INTR_FRAM_ERR);
+
     ESP_LOGI(TAG, "uart_init: Initialization Successful on UART%d", uart_num);
     return ESP_OK;
 }
@@ -154,6 +158,9 @@ static esp_err_t uart_switch(bool dir, uint8_t lin_pin, uart_port_t uart_num)
         uart_flush_input(uart_num);
     }
 
+    uart_enable_intr_mask(uart_num, UART_INTR_BRK_DET);
+    uart_enable_intr_mask(uart_num, UART_INTR_FRAM_ERR);
+
     ets_delay_us(200);
 
     if (ret != ESP_OK) {
@@ -162,7 +169,7 @@ static esp_err_t uart_switch(bool dir, uint8_t lin_pin, uart_port_t uart_num)
     return ESP_OK;
 }
 
-esp_err_t lin_slave_init(bool uart_init_sel, uint16_t baud_rate, uint8_t lin_pin, uart_port_t uart_num)
+esp_err_t lin_slave_init(bool uart_init_sel, uint32_t baud_rate, uint8_t lin_pin, uart_port_t uart_num)
 {
     if(registration_freeze) {
         ESP_LOGE(TAG, "init: Registration Freeze Active");
@@ -262,13 +269,13 @@ void lin_slave_uart_2(void* pvParameters) {
         if (xQueueReceive(uart2_event_queue, &event, portMAX_DELAY) == pdTRUE) {
             switch (event.type) {
                 case UART_DATA: {
-                    int to_read = event.size;
+                    uint32_t to_read = event.size;
                     while (to_read > 0) {
                         int chunk = (to_read > sizeof(data)) ? sizeof(data) : to_read;
                         int r = uart_read_bytes(uart_num, data, chunk, pdMS_TO_TICKS(50));
                         if (r > 0) {
                             for (int i = 0; i < r; ++i) {
-                                lin_slave_fsm_2(data[i]);
+                                lin_slave_fsm(data[i], false);
                             }
                         }
                         to_read -= chunk;
@@ -283,7 +290,9 @@ void lin_slave_uart_2(void* pvParameters) {
                     uart_flush_input(uart_num);
                     break;
                 case UART_BREAK:
+                    break;
                 case UART_PARITY_ERR:
+                    break;
                 case UART_FRAME_ERR:
                     break;
                 default:
@@ -305,13 +314,13 @@ void lin_slave_uart_1(void* pvParameters) {
         if (xQueueReceive(uart1_event_queue, &event, portMAX_DELAY) == pdTRUE) {
             switch (event.type) {
                 case UART_DATA: {
-                    int to_read = event.size;
+                    uint32_t to_read = event.size;
                     while (to_read > 0) {
                         int chunk = (to_read > sizeof(data)) ? sizeof(data) : to_read;
                         int r = uart_read_bytes(uart_num, data, chunk, pdMS_TO_TICKS(50));
                         if (r > 0) {
                             for (int i = 0; i < r; ++i) {
-                                lin_slave_fsm_1(data[i]);
+                                lin_slave_fsm(data[i], true);
                             }
                         }
                         to_read -= chunk;
@@ -326,7 +335,9 @@ void lin_slave_uart_1(void* pvParameters) {
                     uart_flush_input(uart_num);
                     break;
                 case UART_BREAK:
+                    break;
                 case UART_PARITY_ERR:
+                    break;
                 case UART_FRAME_ERR:
                     break;
                 default:
@@ -337,270 +348,139 @@ void lin_slave_uart_1(void* pvParameters) {
     taskYIELD();
 }
 
-void lin_slave_fsm_2(uint8_t buffer_byte) 
+void lin_slave_fsm(uint8_t buffer_byte, bool uart_channel) 
 {
-    uart_port_t uart_num = UART_NUM_2;
-    static uint8_t cnt = 0;
-    static uint8_t curr_pid = 0xff;
-    static lin_slave_state_t curr_state = LIN_STATE_IDLE;
+    static uint8_t cnt_1 = 0, cnt_2 = 0;
+    static uint8_t curr_pid_1 = 0xff, curr_pid_2 = 0xff;
+    static lin_slave_state_t curr_state_1 = LIN_STATE_IDLE, curr_state_2 = LIN_STATE_IDLE;
+    lin_slave_state_t *curr_state = (uart_channel) ? &curr_state_1 : &curr_state_2;
+    uart_port_t uart_num = (uart_channel) ? UART_NUM_1 : UART_NUM_2;
+    uint8_t *cnt = (uart_channel) ? &cnt_1 : &cnt_2, *curr_pid = (uart_channel) ? &curr_pid_1 : &curr_pid_2;
 
-            switch (curr_state) {
-                case LIN_STATE_IDLE: {
-                    if(buffer_byte == 0x00) {
-                        cnt++;
-                        if (cnt >= 2) {
-                            curr_state = LIN_STATE_SYNC;
-                            cnt = 0;
-                        }
-                    }
-                    else {
-                        if (cnt > 0) {
-                            ESP_LOGW(TAG, "UART%d: Expected 0x00, got 0x%02X (reset cnt)", uart_num, buffer_byte);
-                        }
-                        cnt = 0;
-                    }
-                    break;
-                }
-
-                case LIN_STATE_SYNC: {
-                    if(buffer_byte == 0x55) {
-                        curr_state = LIN_STATE_PID;
-                    }
-                    else {
-                        ESP_LOGE(TAG, "UART%d: Expected 0x55, got 0x%02X", uart_num, buffer_byte);
-                        curr_state = LIN_STATE_ERROR;
-                    }
-                    break;
-                }
-
-                case LIN_STATE_PID: {
-                    uint8_t ent = pid_lut(buffer_byte);
-                    if (parity_calc((buffer_byte & 0x3f)) == buffer_byte && ent != 0xff) {
-                        curr_pid = slave_ctx[ent].pid;
-                        if (slave_ctx[ent].direction) {
-                            uart_switch(true, slave_ctx[ent].pin, slave_ctx[ent].uart_num);
-                            
-                            //LIN_STATE_TX_DATA:
-                            if (xSemaphoreTake(lin_slave_buffer_lock_2, pdMS_TO_TICKS(1000)) != pdTRUE) {
-                                curr_state = LIN_STATE_ERROR;
-                                break;
-                            }
-
-                            uart_write_bytes(uart_num, slave_ctx[ent].buffer, slave_ctx[ent].data_length);
-                            uart_wait_tx_done(uart_num, pdMS_TO_TICKS(100));
-                                        
-                            xSemaphoreGive(lin_slave_buffer_lock_2);
-                            
-                            //LIN_STATE_TX_CHECKSUM:
-                            uint8_t checksum = ((slave_ctx[ent].checksum_type) && ((curr_pid & 0x3f) < 0x3c)) ? checksum_enhanced(ent, slave_ctx[ent].buffer) : checksum_classic(ent, slave_ctx[ent].buffer);
-                            uart_write_bytes(uart_num, &checksum, 1);
-                            uart_wait_tx_done(uart_num, pdMS_TO_TICKS(100));
-                            
-                            uart_switch(false, slave_ctx[ent].pin, slave_ctx[ent].uart_num);
-                            curr_state = LIN_STATE_IDLE;
-                        }
-                        else {
-                            curr_state = LIN_STATE_RX_DATA;
-                        }
-                    }
-                    else if (parity_calc((buffer_byte & 0x3f)) != buffer_byte) {
-                        curr_state = LIN_STATE_ERROR;
-                        ESP_LOGE(TAG, "UART%d: PID Parity Mismatch", uart_num);
-                    }
-                    else {
-                        ESP_LOGI(TAG, "UART%d: Unregistered PID 0x%02X", uart_num, buffer_byte);
-                        curr_state = LIN_STATE_IDLE;
-                    }
-                    break;
-                }
-                
-                case LIN_STATE_RX_DATA: {
-                    uint8_t ent = pid_lut(curr_pid);
-                    if(ent == 0xff) {
-                        curr_state = LIN_STATE_ERROR;
-                    }
-                    else {
-                        if (xSemaphoreTake(lin_slave_buffer_lock_2, pdMS_TO_TICKS(1000)) != pdTRUE) {
-                            curr_state = LIN_STATE_ERROR;
-                            break;
-                        }
-                        
-                        if (slave_ctx[ent].data_byte_cnt < slave_ctx[ent].data_length - 1) {
-                            slave_ctx[ent].buffer[slave_ctx[ent].data_byte_cnt] = buffer_byte;
-                            slave_ctx[ent].data_byte_cnt++;
-                        }
-                        else if(slave_ctx[ent].data_byte_cnt == slave_ctx[ent].data_length - 1) {
-                            slave_ctx[ent].buffer[slave_ctx[ent].data_byte_cnt] = buffer_byte;
-                            slave_ctx[ent].data_byte_cnt = 0;
-                            curr_state = LIN_STATE_RX_CHECKSUM;
-                        }
-                        else {
-                            curr_state = LIN_STATE_ERROR;
-                        }
-                        
-                        xSemaphoreGive(lin_slave_buffer_lock_2);
-                    }
-                    break;
-                }
-                
-                case LIN_STATE_RX_CHECKSUM: {
-                    uint8_t ent = pid_lut(curr_pid);
-                    if (ent == 0xff) {
-                        curr_state = LIN_STATE_ERROR;
-                    }
-                    else {
-                        uint8_t calc_checksum = ((slave_ctx[ent].checksum_type) && ((curr_pid & 0x3f) < 0x3c)) ? checksum_enhanced(ent, slave_ctx[ent].buffer) : checksum_classic(ent, slave_ctx[ent].buffer);
-                        
-                        if (calc_checksum == buffer_byte) {
-                            curr_state = LIN_STATE_IDLE;
-                        }
-                        else {
-                            ESP_LOGE(TAG, "UART%d: Checksum error: got 0x%02X, expected 0x%02X", uart_num, buffer_byte, calc_checksum);
-                            curr_state = LIN_STATE_ERROR;
-                        }
-                    }
-                    break;
-                }
-
-                case LIN_STATE_ERROR: {
-                    ESP_LOGE(TAG, "UART%d: ERROR - resetting to IDLE", uart_num);
-                    curr_state = LIN_STATE_IDLE;
-                    cnt = 0;
-                    curr_pid = 0xff;
-                    break;
+    switch (*curr_state) {
+        case LIN_STATE_IDLE: {
+            if(buffer_byte == 0x00) {
+                (*cnt)++;
+                if (*cnt >= 2) {
+                    *curr_state = LIN_STATE_SYNC;
+                    *cnt = 0;
                 }
             }
-}
-
-void lin_slave_fsm_1(uint8_t buffer_byte) 
-{
-    uart_port_t uart_num = UART_NUM_1;
-    static uint8_t cnt = 0;
-    static uint8_t curr_pid = 0xff;
-    static lin_slave_state_t curr_state = LIN_STATE_IDLE;
-
-            switch (curr_state) {
-                case LIN_STATE_IDLE: {
-                    if(buffer_byte == 0x00) {
-                        cnt++;
-                        if (cnt >= 2) {
-                            curr_state = LIN_STATE_SYNC;
-                            cnt = 0;
-                        }
-                    }
-                    else {
-                        if (cnt > 0) {
-                            ESP_LOGW(TAG, "UART%d: Expected 0x00, got 0x%02X (reset cnt)", uart_num, buffer_byte);
-                        }
-                        cnt = 0;
-                    }
-                    break;
+            else {
+                if (*cnt > 0) {
+                    ESP_LOGW(TAG, "UART%d: Expected 0x00, got 0x%02X (reset cnt)", uart_num, buffer_byte);
                 }
+                *cnt = 0;
+            }
+            break;
+        }
 
-                case LIN_STATE_SYNC: {
-                    if(buffer_byte == 0x55) {
-                        curr_state = LIN_STATE_PID;
-                    }
-                    else {
-                        ESP_LOGE(TAG, "UART%d: Expected 0x55, got 0x%02X", uart_num, buffer_byte);
-                        curr_state = LIN_STATE_ERROR;
-                    }
-                    break;
-                }
+        case LIN_STATE_SYNC: {
+            if(buffer_byte == 0x55) {
+                *curr_state = LIN_STATE_PID;
+            }
+            else {
+                ESP_LOGE(TAG, "UART%d: Expected 0x55, got 0x%02X", uart_num, buffer_byte);
+                *curr_state = LIN_STATE_ERROR;
+            }
+            break;
+        }
 
-                case LIN_STATE_PID: {
-                    uint8_t ent = pid_lut(buffer_byte);
-                    if (parity_calc((buffer_byte & 0x3f)) == buffer_byte && ent != 0xff) {
-                        curr_pid = slave_ctx[ent].pid;
-                        if (slave_ctx[ent].direction) {
-                            uart_switch(true, slave_ctx[ent].pin, slave_ctx[ent].uart_num);
+        case LIN_STATE_PID: {
+            uint8_t ent = pid_lut(buffer_byte);
+            if (parity_calc((buffer_byte & 0x3f)) == buffer_byte && ent != 0xff) {
+                *curr_pid = slave_ctx[ent].pid;
+                if (slave_ctx[ent].direction) {
+                    uart_switch(true, slave_ctx[ent].pin, slave_ctx[ent].uart_num);
                             
-                            //LIN_STATE_TX_DATA:
-                            if (xSemaphoreTake(lin_slave_buffer_lock_1, pdMS_TO_TICKS(1000)) != pdTRUE) {
-                                curr_state = LIN_STATE_ERROR;
-                                break;
-                            }
-                            uart_write_bytes(uart_num, slave_ctx[ent].buffer, slave_ctx[ent].data_length);
-                            uart_wait_tx_done(uart_num, pdMS_TO_TICKS(100));
+                    //LIN_STATE_TX_DATA:
+                    if (xSemaphoreTake(((uart_channel) ? lin_slave_buffer_lock_1 : lin_slave_buffer_lock_2), pdMS_TO_TICKS(1000)) != pdTRUE) {
+                        *curr_state = LIN_STATE_ERROR;
+                        break;
+                    }
+
+                    uart_write_bytes(uart_num, slave_ctx[ent].buffer, slave_ctx[ent].data_length);
+                    uart_wait_tx_done(uart_num, pdMS_TO_TICKS(100));
                                         
-                            xSemaphoreGive(lin_slave_buffer_lock_1);
-
-                            //LIN_STATE_TX_CHECKSUM:
-                            uint8_t checksum = ((slave_ctx[ent].checksum_type) && ((curr_pid & 0x3f) < 0x3c)) ? checksum_enhanced(ent, slave_ctx[ent].buffer) : checksum_classic(ent, slave_ctx[ent].buffer);
-                            uart_write_bytes(uart_num, &checksum, 1);
-                            uart_wait_tx_done(uart_num, pdMS_TO_TICKS(100));
+                    xSemaphoreGive(((uart_channel) ? lin_slave_buffer_lock_1 : lin_slave_buffer_lock_2));
+                    
+                    //LIN_STATE_TX_CHECKSUM:
+                    uint8_t checksum = ((slave_ctx[ent].checksum_type) && ((*curr_pid & 0x3f) < 0x3c)) ? checksum_enhanced(ent, slave_ctx[ent].buffer) : checksum_classic(ent, slave_ctx[ent].buffer);
+                    uart_write_bytes(uart_num, &checksum, 1);
+                    uart_wait_tx_done(uart_num, pdMS_TO_TICKS(100));
                             
-                            uart_switch(false, slave_ctx[ent].pin, slave_ctx[ent].uart_num);
-                            curr_state = LIN_STATE_IDLE;
-                        }
-                        else {
-                            curr_state = LIN_STATE_RX_DATA;
-                        }
-                    }
-                    else if (parity_calc((buffer_byte & 0x3f)) != buffer_byte) {
-                        curr_state = LIN_STATE_ERROR;
-                        ESP_LOGE(TAG, "UART%d: PID Parity Mismatch", uart_num);
-                    }
-                    else {
-                        ESP_LOGI(TAG, "UART%d: Unregistered PID 0x%02X", uart_num, buffer_byte);
-                        curr_state = LIN_STATE_IDLE;
-                    }
-                    break;
+                    uart_switch(false, slave_ctx[ent].pin, slave_ctx[ent].uart_num);
+                    *curr_state = LIN_STATE_IDLE;
                 }
-                
-                case LIN_STATE_RX_DATA: {
-                    uint8_t ent = pid_lut(curr_pid);
-                    if(ent == 0xff) {
-                        curr_state = LIN_STATE_ERROR;
-                    }
-                    else {
-                        if (xSemaphoreTake(lin_slave_buffer_lock_1, pdMS_TO_TICKS(1000)) != pdTRUE) {
-                            curr_state = LIN_STATE_ERROR;
-                            break;
-                        }
-                        
-                        if (slave_ctx[ent].data_byte_cnt < slave_ctx[ent].data_length - 1) {
-                            slave_ctx[ent].buffer[slave_ctx[ent].data_byte_cnt] = buffer_byte;
-                            slave_ctx[ent].data_byte_cnt++;
-                        }
-                        else if(slave_ctx[ent].data_byte_cnt == slave_ctx[ent].data_length - 1) {
-                            slave_ctx[ent].buffer[slave_ctx[ent].data_byte_cnt] = buffer_byte;
-                            slave_ctx[ent].data_byte_cnt = 0;
-                            curr_state = LIN_STATE_RX_CHECKSUM;
-                        }
-                        else {
-                            curr_state = LIN_STATE_ERROR;
-                        }
-                        
-                        xSemaphoreGive(lin_slave_buffer_lock_1);
-                    }
-                    break;
-                }
-                
-                case LIN_STATE_RX_CHECKSUM: {
-                    uint8_t ent = pid_lut(curr_pid);
-                    if (ent == 0xff) {
-                        curr_state = LIN_STATE_ERROR;
-                    }
-                    else {
-                        uint8_t calc_checksum = ((slave_ctx[ent].checksum_type) && ((curr_pid & 0x3f) < 0x3c)) ? checksum_enhanced(ent, slave_ctx[ent].buffer) : checksum_classic(ent, slave_ctx[ent].buffer);
-                        
-                        if (calc_checksum == buffer_byte) {
-                            curr_state = LIN_STATE_IDLE;
-                        }
-                        else {
-                            curr_state = LIN_STATE_ERROR;
-                        }
-                    }
-                    break;
-                }
-
-                case LIN_STATE_ERROR: {
-                    ESP_LOGE(TAG, "UART%d: ERROR - resetting to IDLE", uart_num);
-                    curr_state = LIN_STATE_IDLE;
-                    cnt = 0;
-                    curr_pid = 0xff;
-                    break;
+                else {
+                    *curr_state = LIN_STATE_RX_DATA;
                 }
             }
+            else if (parity_calc((buffer_byte & 0x3f)) != buffer_byte) {
+                *curr_state = LIN_STATE_ERROR;
+                ESP_LOGE(TAG, "UART%d: PID Parity Mismatch", uart_num);
+            }
+            else {
+                ESP_LOGI(TAG, "UART%d: Unregistered PID 0x%02X", uart_num, buffer_byte);
+                *curr_state = LIN_STATE_IDLE;
+            }
+            break;
+        }
+                
+        case LIN_STATE_RX_DATA: {
+            uint8_t ent = pid_lut(*curr_pid);
+            if(ent == 0xff) {
+                *curr_state = LIN_STATE_ERROR;
+            }
+            else {
+                if (xSemaphoreTake(((uart_channel) ? lin_slave_buffer_lock_1 : lin_slave_buffer_lock_2), pdMS_TO_TICKS(1000)) != pdTRUE) {
+                    *curr_state = LIN_STATE_ERROR;
+                    break;
+                }
+                        
+                if (slave_ctx[ent].data_byte_cnt < slave_ctx[ent].data_length - 1) {
+                    slave_ctx[ent].buffer[slave_ctx[ent].data_byte_cnt] = buffer_byte;
+                    slave_ctx[ent].data_byte_cnt++;
+                }
+                else if(slave_ctx[ent].data_byte_cnt == slave_ctx[ent].data_length - 1) {
+                    slave_ctx[ent].buffer[slave_ctx[ent].data_byte_cnt] = buffer_byte;
+                    slave_ctx[ent].data_byte_cnt = 0;
+                    *curr_state = LIN_STATE_RX_CHECKSUM;
+                }
+                else {
+                    *curr_state = LIN_STATE_ERROR;
+                }
+                        
+                xSemaphoreGive(((uart_channel) ? lin_slave_buffer_lock_1 : lin_slave_buffer_lock_2));
+            }
+            break;
+        }
+                
+        case LIN_STATE_RX_CHECKSUM: {
+            uint8_t ent = pid_lut(*curr_pid);
+            if (ent == 0xff) {
+                *curr_state = LIN_STATE_ERROR;
+            }
+            else {
+                uint8_t calc_checksum = ((slave_ctx[ent].checksum_type) && ((*curr_pid & 0x3f) < 0x3c)) ? checksum_enhanced(ent, slave_ctx[ent].buffer) : checksum_classic(ent, slave_ctx[ent].buffer);
+                        
+                if (calc_checksum == buffer_byte) {
+                    *curr_state = LIN_STATE_IDLE;
+                }
+                else {
+                    ESP_LOGE(TAG, "UART%d: Checksum error: got 0x%02X, expected 0x%02X", uart_num, buffer_byte, calc_checksum);
+                    *curr_state = LIN_STATE_ERROR;
+                }
+            }
+            break;
+        }
+
+        case LIN_STATE_ERROR: {
+            ESP_LOGE(TAG, "UART%d: ERROR - resetting to IDLE", uart_num);
+            *curr_state = LIN_STATE_IDLE;
+            *cnt = 0;
+            *curr_pid = 0xff;
+            break;
+        }
+    }
 }
