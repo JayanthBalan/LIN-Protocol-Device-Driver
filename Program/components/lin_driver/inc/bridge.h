@@ -12,4 +12,7 @@
 #include "rom/ets_sys.h"
 #include <string.h>
 
+#define LIN_BRK_LEN 16 //Break Field Length
+#define MAX_UARTS 2 //UART Channels -> ESP32
+
 #endif
