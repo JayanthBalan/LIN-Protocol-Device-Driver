@@ -21,7 +21,7 @@ static uint8_t entry_cnt = 0;
 static uint8_t idx_map[LIN_MAX_PERMIT_SLAVES];
 
 //Function Prototypes
-static esp_err_t uart_init(uint16_t, uint8_t, uart_port_t);
+static esp_err_t uart_init(uint32_t, uint8_t, uart_port_t);
 static esp_err_t uart_switch(bool, uint8_t, uart_port_t);
 static uint8_t checksum_classic(uint8_t, uint8_t*);
 static uint8_t checksum_enhanced(uint8_t, uint8_t*);
@@ -68,7 +68,7 @@ esp_err_t lin_slave_registry(uint8_t id, uint8_t len, bool type, uart_port_t uar
     return ESP_OK;
 }
 
-static esp_err_t uart_init(uint16_t baud_rate, uint8_t lin_pin, uart_port_t uart_num)
+static esp_err_t uart_init(uint32_t baud_rate, uint8_t lin_pin, uart_port_t uart_num)
 {
     esp_err_t ret;
     uart_config_t config = {
@@ -129,7 +129,7 @@ static esp_err_t uart_switch(bool dir, uint8_t lin_pin, uart_port_t uart_num)
     return ESP_OK;
 }
 
-esp_err_t lin_master_init(bool uart_init_sel, uint16_t baud_rate, uint8_t lin_pin, uart_port_t uart_num)
+esp_err_t lin_master_init(bool uart_init_sel, uint32_t baud_rate, uint8_t lin_pin, uart_port_t uart_num)
 {
     if (uart_init_sel) { //UART Initialization Option
         esp_err_t ret = uart_init(baud_rate, lin_pin, uart_num);
