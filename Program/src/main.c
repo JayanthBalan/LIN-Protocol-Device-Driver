@@ -43,7 +43,7 @@ void master_sim_task(void* pvParameters) {
         else {
             ESP_LOGE(TAG, "Master: Transmission Failed for PID 0x12 : %s", esp_err_to_name(err));
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(15));
 
         err = lin_master_rx(0x2A, data_get);
         if(err == ESP_OK) {
@@ -52,7 +52,7 @@ void master_sim_task(void* pvParameters) {
         else {
             ESP_LOGE(TAG, "Master: Reception Failed for PID 0x2A : %s", esp_err_to_name(err));
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(15));
     }
 }
 
@@ -72,19 +72,19 @@ void slave_sim_task(void* pvParameters) {
         memcpy(tx_ctx->buffer, data_send[1], 3);
         xSemaphoreGive(lin_slave_buffer_lock_2);
         ESP_LOGI(TAG, "Slave: Buffer Prepped for TX via 0x2A");
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(15));
 
         xSemaphoreTake(lin_slave_buffer_lock_2, portMAX_DELAY);
         memcpy(data_get, rx_ctx->buffer, 8);
         xSemaphoreGive(lin_slave_buffer_lock_2);
         ESP_LOGI(TAG, "Slave: Buffer Updated from RX via 0x12: %02X %02X %02X %02X %02X %02X %02X %02X", data_get[0], data_get[1], data_get[2], data_get[3], data_get[4], data_get[5], data_get[6], data_get[7]);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(15));
 
         xSemaphoreTake(lin_slave_buffer_lock_2, portMAX_DELAY);
         memcpy(tx_ctx->buffer, data_send[0], 3);
         xSemaphoreGive(lin_slave_buffer_lock_2);
         ESP_LOGI(TAG, "Slave: Buffer Prepped for TX via 0x2A");
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(15));
     }
 
 }
