@@ -1,5 +1,5 @@
 Development Environment:
-- ESP-IDF 5.5
+- ESP-IDF
 - Validated in Wokwi simulation for signal-level timing
 - PulseView Logic analyzer traces used to verify break, sync, PID, and checksum behavior
 
