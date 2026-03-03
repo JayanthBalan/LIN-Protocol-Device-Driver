@@ -26,10 +26,10 @@ void slave_sim_task(void*);
 static void rmt_clk_init(void);
 
 void master_sim_task(void* pvParameters) {
-    uint8_t data_send[8] = {0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73}, data_get[3];
+    uint8_t data_send[8] = {0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73, 0x83}, data_get[3];
 
     lin_master_init(true, 19200, 17, UART_NUM_1);
-    lin_slave_registry(0x12, 7, true, UART_NUM_1, 17);
+    lin_slave_registry(0x12, 8, true, UART_NUM_1, 17);
     lin_slave_registry(0x2A, 3, false, UART_NUM_1, 17);
     lin_master_begin();
 
@@ -57,11 +57,11 @@ void master_sim_task(void* pvParameters) {
 }
 
 void slave_sim_task(void* pvParameters) {
-    uint8_t data_send[2][8] = {{0xAB, 0xCD, 0xEF}, {0xA1, 0xB2, 0xC3}}, data_get[7];
+    uint8_t data_send[2][3] = {{0xAB, 0xCD, 0xEF}, {0xA1, 0xB2, 0xC3}}, data_get[8];
     lin_slave_context_t *rx_ctx, *tx_ctx;
 
     lin_slave_init(true, 19200, 26, UART_NUM_2);
-    lin_slave_register(0x12, 7, true, UART_NUM_2, false, 26, default_buffer, &rx_ctx);
+    lin_slave_register(0x12, 8, true, UART_NUM_2, false, 26, default_buffer, &rx_ctx);
     lin_slave_register(0x2A, 3, false, UART_NUM_2, true, 26, default_buffer, &tx_ctx);
     lin_slave_begin();
 
@@ -75,9 +75,9 @@ void slave_sim_task(void* pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(10));
 
         xSemaphoreTake(lin_slave_buffer_lock_2, portMAX_DELAY);
-        memcpy(data_get, rx_ctx->buffer, 7);
+        memcpy(data_get, rx_ctx->buffer, 8);
         xSemaphoreGive(lin_slave_buffer_lock_2);
-        ESP_LOGI(TAG, "Slave: Buffer Updated from RX via 0x12: %02X %02X %02X %02X %02X %02X %02X", data_get[0], data_get[1], data_get[2], data_get[3], data_get[4], data_get[5], data_get[6]);
+        ESP_LOGI(TAG, "Slave: Buffer Updated from RX via 0x12: %02X %02X %02X %02X %02X %02X %02X %02X", data_get[0], data_get[1], data_get[2], data_get[3], data_get[4], data_get[5], data_get[6], data_get[7]);
         vTaskDelay(pdMS_TO_TICKS(10));
 
         xSemaphoreTake(lin_slave_buffer_lock_2, portMAX_DELAY);
