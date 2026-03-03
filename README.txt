@@ -1,100 +1,181 @@
 # ESP32 LIN Protocol Driver
 
-Professional-grade Local Interconnect Network (LIN) Frame-Layer Implementation for ESP32 microcontrollers using ESP-IDF framework. Supports both master and slave operation with full thread-safety, event-driven architecture, and RTOS integration.
+Professional-grade Local Interconnect Network (LIN) Frame-Layer Implementation for ESP32 microcontrollers using the ESP-IDF framework. Supports both master and slave operation with full thread-safety, event-driven architecture, and RTOS integration.
 
 ![ESP32 LIN Circuit](https://img.shields.io/badge/Platform-ESP32-blue) ![Framework](https://img.shields.io/badge/Framework-ESP--IDF-green) ![Protocol](https://img.shields.io/badge/Protocol-LIN%202.x-orange)
+
+---
+
+## Waveform Validation
+
+PulseView logic analyzer captures of the LIN bus at 19200 baud. Simulation runs on Wokwi (ESP-IDF), with the `.vcd` file imported into PulseView for decoding. D0 = LIN wire, D1 = RMT baud clock reference.
+
+**Full Bus Overview** — Slave RX frame followed by Master TX frame across consecutive cycles
+
+`[BREAK: 00 00] [SYNC: 55] [PID: 6A] [DATA: A1 B2 C3] [CHKSUM: E7]` → `[BREAK: 00 00] [SYNC: 55] [PID: 92] [DATA: 13 23 33 43 53 63 73 83] [CHKSUM: 13]`
+
+![Bus Overview](waveforms/Waveform_1.png)
+
+**Slave TX Response (zoomed)** — `[BREAK: 00 00] [SYNC: 55] [PID: 6A] [DATA: A1 B2 C3] [CHKSUM: E7]`
+
+![Slave TX Frame](waveforms/Waveform_2.png)
+
+**Master TX Frame (zoomed)** — `[BREAK: 00 00] [SYNC: 55] [PID: 92] [DATA: 13 23 33 43 53 63 73 83] [CHKSUM: 13]`
+
+![Master TX Frame](waveforms/Waveform_3.png)
+
+**Bit-Level View** — Start/stop bit transitions on slave response bytes `AB CD EF`
+
+![Bit Level](waveforms/Waveform_4.png)
+
+> The break field is implemented as two back-to-back `0x00` bytes. The UART decoder reports a frame error on the break bytes — this is expected. See [Break Field Implementation](#break-field-implementation) for details.
+
+---
 
 ## Features
 
 ### Core Capabilities
-- **LIN frame-layer compatible with 1.x and 2.x protocol checksum behavior** - Implementation of LIN frame-layer specification with enhanced and classic checksum support
-- **Dual-Mode Operation** - Simultaneous master and slave functionality on separate UART channels
-- **Event-Driven Architecture** - UART event queue-based slave FSM for efficient byte processing
-- **Thread-Safe Design** - Mutex-protected master operations and slave buffer access
-- **Multi-UART Support** - Independent operation on UART1 and UART2 channels
-- **Registration Freeze Mechanism** - Prevents runtime configuration changes after initialization
+- **LIN 1.x / 2.x Checksum Support** — Enhanced (PID + data) for IDs `0x00–0x3B`, classic (data only) for diagnostic frames `0x3C–0x3F`
+- **Dual-Mode Operation** — Simultaneous master and slave on separate UART channels
+- **Event-Driven Slave Architecture** — UART event queue-based FSM for efficient byte processing
+- **Thread-Safe Design** — Mutex-protected master operations and slave buffer access
+- **Multi-UART Support** — Independent operation on UART1 and UART2
+- **Registration Freeze Mechanism** — Prevents runtime configuration changes after initialization
 
 ### Technical Implementation
-- **Master**: Blocking TX/RX functions with global mutex for thread-safe multi-task access
-- **Slave**: Event-driven FSM with UART event queues for real-time frame processing
-- **PID Calculation**: Automatic parity bit generation (P0, P1) per LIN 2.x specification
-- **Checksum Types**: Enhanced (PID + data) for IDs < 0x3C, classic (data only) for diagnostic frames
-- **Half-Duplex UART**: Dynamic TX/RX pin switching with proper timing delays
-- **Buffer Protection**: Per-UART mutex for safe buffer read/write operations
+- **Master** — Blocking TX/RX with global mutex for safe multi-task access
+- **Slave** — Event-driven FSM consuming UART event queues for real-time frame processing
+- **PID Calculation** — Automatic P0/P1 parity generation per LIN 2.x specification
+- **Half-Duplex UART** — Dynamic TX/RX pin switching via `uart_set_pin()` with settling delays
+- **Buffer Protection** — Per-UART mutex (`lin_slave_buffer_lock_1/2`) for safe concurrent buffer access
+- **RMT Baud Clock** — Optional reference clock output for logic analyzer validation
+
+---
 
 ## Architecture
 
-### Master Architecture
+### Master
 ```
 Application Task
-      ↓
-lin_master_tx/rx (Mutex Protected)
-      ↓
-UART Half-Duplex Switch
-      ↓
-Frame: [BREAK][SYNC][PID][DATA][CHECKSUM]
+      │
+      ▼
+lin_master_tx / lin_master_rx   (Global mutex protected)
+      │
+      ▼
+uart_switch()                   (Dynamic TX/RX pin reassignment)
+      │
+      ▼
+LIN Frame: [BREAK][SYNC][PID][DATA][CHECKSUM]
 ```
 
-### Slave Architecture
+### Slave
 ```
-UART Event Queue
-      ↓
-Byte-by-Byte FSM Processing
-      ↓
-States: IDLE → SYNC → PID → RX_DATA/TX_DATA → CHECKSUM → IDLE
-      ↓
-Buffer (Mutex Protected)
-      ↓
-Application Task
+UART Hardware → Event Queue
+                    │
+                    ▼
+            lin_slave_uart_1/2 Task
+                    │
+                    ▼
+            lin_slave_fsm()     (Byte-by-byte state machine)
+                    │
+          ┌─────────┴──────────┐
+          ▼                    ▼
+    LIN_STATE_RX_DATA    LIN_STATE_TX_DATA
+    (write to buffer)    (transmit buffer)
+          │                    │
+          └─────────┬──────────┘
+                    ▼
+         Buffer (Mutex protected)
+                    │
+                    ▼
+         Application Task
 ```
+
+### FSM States
+```
+IDLE → SYNC → PID → RX_DATA → RX_CHECKSUM → IDLE
+                 └→ TX_DATA (inline) ──────→ IDLE
+                 └→ ERROR ─────────────────→ IDLE
+```
+
+---
+
+## Break Field Implementation
+
+The break field is generated by transmitting two consecutive `0x00` bytes at the configured baud rate:
+
+```c
+uint8_t dummy[2] = {0x00, 0x00};
+uart_write_bytes(uart_num, dummy, 2);
+uart_wait_tx_done(uart_num, pdMS_TO_TICKS(100));
+```
+
+This is a software approximation, not a spec-compliant LIN break. A proper LIN break requires a dedicated dominant pulse of at least 13 bit times with no embedded stop bit. Two `0x00` bytes produce two standard UART frames, each with a stop bit between them, so the dominant window is not fully continuous. Hardware-level break generation (e.g., using the ESP32 `uart_set_line_inverse` or a dedicated LIN transceiver) would be required for strict compliance.
+
+The slave does not use hardware break detection. Instead, it counts two received `0x00` bytes in `LIN_STATE_IDLE` to identify the start of a frame. The `UART_FRAME_ERR` event generated by the break bytes is silently discarded — this is intentional. Note that this also suppresses framing errors on data bytes; add error tracking in `UART_FRAME_ERR` if stricter fault detection is needed.
+
+---
 
 ## Hardware Requirements
 
 ### Components
-- **Microcontroller**: ESP32 (any variant with 2+ UART channels)
-- **LIN Transceiver**: TJA1020, MCP2003, or equivalent (recommended for production)
-- **Power Supply**: 3.3V for ESP32, 12V bus voltage for LIN network
+- **Microcontroller** — ESP32 (any variant with 2+ UART channels)
+- **LIN Transceiver** — TJA1020, MCP2003, or equivalent (recommended for production)
+- **Power Supply** — 3.3 V for ESP32; 12 V bus voltage for LIN network
 
 ### Pin Configuration
-| Function | GPIO | UART | Notes |
-|----------|------|------|-------|
-| Master TX/RX | 17 | UART_NUM_1 | Configurable |
-| Slave TX/RX | 26 | UART_NUM_2 | Configurable |
-| Reserved | 16 | - | Dummy pin (master) |
-| Reserved | 25 | - | Dummy pin (slave) |
 
-**Note**: UART_NUM_0 is reserved for ESP32 logging and cannot be used.
+| Function | GPIO | UART | Direction | Notes |
+|---|---|---|---|---|
+| Master LIN | 17 | UART_NUM_1 | TX/RX (switched) | Configurable |
+| Master Dummy | 16 | UART_NUM_1 | — | `LIN_DUMMY_PIN_MASTER`, always disconnected |
+| Slave LIN | 26 | UART_NUM_2 | TX/RX (switched) | Configurable |
+| Slave Dummy | 25 | UART_NUM_2 | — | `LIN_DUMMY_PIN_SLAVE`, always disconnected |
+| RMT Clock | 18 | — | Output | Optional baud reference for logic analyzer |
+
+> `UART_NUM_0` is reserved for ESP-IDF logging and cannot be used.
 
 ### Wiring
 ```
-ESP32 GPIO → LIN Transceiver → LIN Bus
-             (TX pin)     (TXD)
-             (RX pin)     (RXD)
+ESP32 GPIO ──→ LIN Transceiver ──→ LIN Bus (12 V)
+               TXD / RXD pin        Single-wire open-drain
 ```
 
-For production deployment, always interface the ESP32 with a dedicated LIN transceiver IC to ensure proper bus voltage levels and fault protection.
+---
 
 ## Protocol Specifications
 
 ### Frame Format
 ```
-[BREAK FIELD] [SYNC BYTE] [PID] [DATA 1-8 BYTES] [CHECKSUM]
-    ↓            ↓          ↓           ↓              ↓
-  2 bytes       0x55    ID+Parity   Payload     Classic/Enhanced
+[BREAK FIELD] [SYNC] [PID] [DATA 1–8 bytes] [CHECKSUM]
+   2 × 0x00    0x55   ID+Parity   Payload     Classic / Enhanced
 ```
 
-### Key Parameters
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| Baud Rate | 9600-20000 | Typically 19200 for automotive |
-| ID Range | 0x00 - 0x3F | 6-bit identifier |
-| Data Length | 1 - 8 bytes | Payload size per frame |
-| Checksum | Classic / Enhanced | Auto-selected based on ID |
-| Break Field | 13-bit minimum | LIN 1.x/2.x compatible |
+### Parameters
+
+| Parameter | Value | Notes |
+|---|---|---|
+| Baud Rate | 9600–20000 | Typically 19200 for automotive |
+| ID Range | `0x00`–`0x3F` | 6-bit identifier |
+| Data Length | 1–8 bytes | Payload size per frame |
+| Break Field | ≥13 dominant bits | Implemented as 2 × `0x00` (~18 bits) |
+| Sync Byte | `0x55` | Fixed |
+| Checksum | Classic / Enhanced | Auto-selected by ID range |
+| Diagnostic IDs | `0x3C`–`0x3F` | Always use classic checksum |
+
+### PID Parity
+
+```
+P0 = ID0 ⊕ ID1 ⊕ ID2 ⊕ ID4
+P1 = ¬(ID1 ⊕ ID3 ⊕ ID4 ⊕ ID5)
+PID = ID[5:0] | (P0 << 6) | (P1 << 7)
+```
+
+---
 
 ## Installation
 
-### PlatformIO
+### PlatformIO (`platformio.ini`)
 ```ini
 [env:nodemcu-32s]
 platform = espressif32
@@ -102,209 +183,241 @@ board = nodemcu-32s
 framework = espidf
 ```
 
-### File Structure
+### Project Structure
 ```
-project/
-├── main/
+TRIGRAMS/
+├── components/
+│   └── lin_driver/
+│       ├── inc/
+│       │   ├── bridge.h
+│       │   ├── lin_master.h
+│       │   └── lin_slave.h
+│       ├── lin_master.c
+│       ├── lin_slave.c
+│       ├── CMakeLists.txt
+│       └── README.txt
+├── src/
 │   ├── main.c
-│   ├── lin_master.h
-│   ├── lin_master.c
-│   ├── lin_slave.h
-│   ├── lin_slave.c
-│   └── bridge.h
-└── platformio.ini
+│   └── CMakeLists.txt
+├── test/
+├── include/
+├── lib/
+├── CMakeLists.txt
+├── platformio.ini
+├── sdkconfig.nodemcu-32s
+├── wokwi.toml
+├── wokwi.vcd
+├── diagram.json
+└── .gitignore
 ```
+
+---
 
 ## API Reference
 
-### Master Functions
+### `bridge.h` — Shared Definitions
+
+```c
+#define LIN_BRK_LEN     16   // Break field length reference
+#define MAX_UARTS        2   // Supported UART channels
+```
+
+Includes all shared ESP-IDF headers (`esp_log.h`, `driver/uart.h`, `driver/gpio.h`, `rom/ets_sys.h`, etc.) consumed by both master and slave.
+
+---
+
+### Master API (`lin_master.h`)
+
+```c
+#define LIN_DUMMY_PIN_MASTER   16
+#define LIN_MAX_PERMIT_SLAVES  64
+```
 
 #### `lin_master_init()`
 ```c
-esp_err_t lin_master_init(bool uart_init_sel, uint16_t baud_rate, 
+esp_err_t lin_master_init(bool uart_init_sel, uint32_t baud_rate,
                           uint8_t lin_pin, uart_port_t uart_num);
 ```
-Initialize LIN master.
-- **uart_init_sel**: `true` to configure UART, `false` to skip
-- **baud_rate**: LIN bus speed (e.g., 19200)
-- **lin_pin**: GPIO pin for LIN communication
-- **uart_num**: UART channel (UART_NUM_1 or UART_NUM_2)
+Initialize LIN master. Creates the global mutex and optionally configures UART.
+
+| Parameter | Description |
+|---|---|
+| `uart_init_sel` | `true` to configure UART hardware |
+| `baud_rate` | LIN bus speed (e.g., `19200`) |
+| `lin_pin` | GPIO pin for LIN communication |
+| `uart_num` | `UART_NUM_1` or `UART_NUM_2` |
 
 #### `lin_slave_registry()`
 ```c
 esp_err_t lin_slave_registry(uint8_t id, uint8_t len, bool checksum_type,
-                             uart_port_t uart_num, uint8_t lin_pin);
+                              uart_port_t uart_num, uint8_t lin_pin);
 ```
-Register a slave entry in master's lookup table.
-- **id**: LIN identifier (0x00-0x3F)
-- **len**: Data frame length (1-8 bytes)
-- **checksum_type**: `true` = enhanced, `false` = classic
-- **uart_num**: UART channel
-- **lin_pin**: GPIO pin
+Register a slave entry in the master's lookup table. Must be called after `lin_master_init()` and before `lin_master_begin()`.
+
+| Parameter | Description |
+|---|---|
+| `id` | LIN identifier `0x00`–`0x3F` |
+| `len` | Data frame length (1–8 bytes) |
+| `checksum_type` | `true` = enhanced, `false` = classic |
+| `uart_num` | UART channel |
+| `lin_pin` | GPIO pin |
 
 #### `lin_master_begin()`
 ```c
 void lin_master_begin(void);
 ```
-Freeze slave registry and enable operations.
+Freezes the slave registry and enables TX/RX operations. No further `lin_slave_registry()` calls are permitted after this point.
 
 #### `lin_master_tx()`
 ```c
 esp_err_t lin_master_tx(uint8_t id, uint8_t *data);
 ```
-Transmit data frame to slave.
-- **id**: LIN identifier of target slave
-- **data**: Pointer to data buffer (must match registered length)
-- **Returns**: ESP_OK on success
+Transmit a complete LIN frame (header + data + checksum) to the registered slave.
 
 #### `lin_master_rx()`
 ```c
 esp_err_t lin_master_rx(uint8_t id, uint8_t *data);
 ```
-Request data from slave (header-only transmission, slave responds).
-- **id**: LIN identifier of target slave
-- **data**: Pointer to receive buffer
-- **Returns**: ESP_OK on success
+Transmit a LIN header, then receive the slave's data response and verify the checksum.
 
-### Slave Functions
+---
+
+### Slave API (`lin_slave.h`)
+
+```c
+#define LIN_DUMMY_PIN_SLAVE    25
+#define LIN_MAX_PERM_ENTS      64
+#define LIN_MAX_DATA_BYTE_LEN   8
+#define INTER_BYTE_MS          64
+```
+
+#### Slave Context
+```c
+typedef struct {
+    uart_port_t uart_num;
+    uint8_t     pid;
+    uint8_t     data_length;
+    uint8_t     data_byte_cnt;       // Internal RX byte counter
+    bool        checksum_type;       // true = enhanced, false = classic
+    uint8_t     pin;
+    bool        direction;           // true = TX, false = RX
+    uint8_t     buffer[LIN_MAX_DATA_BYTE_LEN];
+} lin_slave_context_t;
+
+extern uint8_t default_buffer[];             // 8 × 0xFF
+extern SemaphoreHandle_t lin_slave_buffer_lock_1;
+extern SemaphoreHandle_t lin_slave_buffer_lock_2;
+```
 
 #### `lin_slave_init()`
 ```c
-esp_err_t lin_slave_init(bool uart_init_sel, uint16_t baud_rate,
+esp_err_t lin_slave_init(bool uart_init_sel, uint32_t baud_rate,
                          uint8_t lin_pin, uart_port_t uart_num);
 ```
-Initialize LIN slave and create FSM task.
-- **uart_init_sel**: `true` to configure UART
-- **baud_rate**: Must match master baud rate
-- **lin_pin**: GPIO pin for LIN communication
-- **uart_num**: UART channel
+Initialize LIN slave. Optionally configures UART, creates the FSM task (suspended), and creates the buffer mutex for the specified UART channel.
 
 #### `lin_slave_register()`
 ```c
 esp_err_t lin_slave_register(uint8_t id, uint8_t len, bool checksum_type,
-                             uart_port_t uart_num, bool direction,
-                             uint8_t lin_pin, uint8_t buf[], 
-                             lin_slave_context_t **ctx);
+                              uart_port_t uart_num, bool direction,
+                              uint8_t lin_pin, uint8_t buf[],
+                              lin_slave_context_t **ctx);
 ```
-Register slave response entry.
-- **id**: LIN identifier (0x00-0x3F)
-- **len**: Data frame length (1-8 bytes)
-- **checksum_type**: `true` = enhanced, `false` = classic
-- **uart_num**: UART channel
-- **direction**: `true` = TX (slave transmits), `false` = RX (slave receives)
-- **lin_pin**: GPIO pin
-- **buf**: Initial buffer data
-- **ctx**: Output pointer to context (for buffer access)
+Register a slave response entry. Returns a context pointer for application-level buffer access.
+
+| Parameter | Description |
+|---|---|
+| `id` | LIN identifier `0x00`–`0x3F` |
+| `len` | Data frame length (1–8 bytes) |
+| `checksum_type` | `true` = enhanced, `false` = classic |
+| `uart_num` | UART channel |
+| `direction` | `true` = slave transmits, `false` = slave receives |
+| `lin_pin` | GPIO pin |
+| `buf` | Initial buffer contents (use `default_buffer` for `0xFF` fill) |
+| `ctx` | Output — pointer to context for buffer access |
 
 #### `lin_slave_begin()`
 ```c
 void lin_slave_begin(void);
 ```
-Start slave FSM tasks and freeze registration.
+Resumes the FSM task(s) and freezes registration. No further `lin_slave_register()` calls are permitted after this point.
 
-### Buffer Access (Critical)
+---
 
-Slave buffers are shared between application and FSM tasks. **Always lock mutex before access**:
+## Buffer Access
+
+Slave buffers are shared between the FSM task and the application task. **Always hold the correct mutex before reading or writing.**
 
 ```c
-// TX Slave (updating sensor data)
+// Update TX buffer (data to send when master polls)
 xSemaphoreTake(lin_slave_buffer_lock_2, portMAX_DELAY);
-my_sensor->buffer[0] = read_temperature();
-my_sensor->buffer[1] = read_humidity();
+tx_ctx->buffer[0] = read_sensor();
+tx_ctx->buffer[1] = status_byte;
 xSemaphoreGive(lin_slave_buffer_lock_2);
 
-// RX Slave (reading command data)
+// Read RX buffer (data received from master)
 xSemaphoreTake(lin_slave_buffer_lock_2, portMAX_DELAY);
-uint8_t command = my_actuator->buffer[0];
+uint8_t command = rx_ctx->buffer[0];
 xSemaphoreGive(lin_slave_buffer_lock_2);
 ```
 
-**Mutex Selection**:
-- `lin_slave_buffer_lock_1` for UART_NUM_1
-- `lin_slave_buffer_lock_2` for UART_NUM_2
+**Mutex selection:**
+
+| UART | Mutex |
+|---|---|
+| `UART_NUM_1` | `lin_slave_buffer_lock_1` |
+| `UART_NUM_2` | `lin_slave_buffer_lock_2` |
+
+---
 
 ## Usage Examples
 
-### Master Device
+### Master
 ```c
 #include "lin_master.h"
 
-void master_task(void* pvParameters) {
-    // Initialize master on UART1, GPIO 17, 19200 baud
+void master_task(void *pvParameters) {
     lin_master_init(true, 19200, 17, UART_NUM_1);
-    
-    // Register slaves
-    lin_slave_registry(0x01, 4, true, UART_NUM_1, 17);  // Temperature sensor
-    lin_slave_registry(0x02, 2, true, UART_NUM_1, 17);  // Actuator control
-    
-    // Begin operations
+    lin_slave_registry(0x01, 4, true, UART_NUM_1, 17);  // RX: temperature sensor
+    lin_slave_registry(0x02, 2, true, UART_NUM_1, 17);  // TX: actuator control
     lin_master_begin();
-    
-    while(1) {
-        // Request temperature from slave 0x01
-        uint8_t temp_data[4];
-        if (lin_master_rx(0x01, temp_data) == ESP_OK) {
-            ESP_LOGI("MASTER", "Temperature: %d°C", temp_data[0]);
-        }
-        
-        // Send command to slave 0x02
-        uint8_t cmd_data[2] = {0xAA, 0x55};
-        lin_master_tx(0x02, cmd_data);
-        
+
+    while (1) {
+        uint8_t temp[4];
+        if (lin_master_rx(0x01, temp) == ESP_OK)
+            ESP_LOGI("MASTER", "Temp: %d°C", temp[0]);
+
+        uint8_t cmd[2] = {0xAA, 0x55};
+        lin_master_tx(0x02, cmd);
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 ```
 
-### Slave Device
+### Slave
 ```c
 #include "lin_slave.h"
 
-lin_slave_context_t *temp_sensor;
-lin_slave_context_t *actuator;
+lin_slave_context_t *temp_ctx, *cmd_ctx;
 
-void sensor_update_task(void *param) {
-    while(1) {
-        uint8_t temp = read_sensor();
-        
-        // Update buffer (transmitted when master requests)
-        xSemaphoreTake(lin_slave_buffer_lock_1, portMAX_DELAY);
-        temp_sensor->buffer[0] = temp;
-        temp_sensor->buffer[1] = 0x00;  // Status byte
-        xSemaphoreGive(lin_slave_buffer_lock_1);
-        
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-}
-
-void slave_task(void* pvParameters) {
-    // Initialize slave on UART1, GPIO 26, 19200 baud
+void slave_task(void *pvParameters) {
     lin_slave_init(true, 19200, 26, UART_NUM_1);
-    
-    // Register TX entry (slave transmits temperature)
-    uint8_t init_temp[4] = {0xFF, 0xFF, 0xFF, 0xFF};
-    lin_slave_register(0x01, 4, true, UART_NUM_1, true, 26, init_temp, &temp_sensor);
-    
-    // Register RX entry (slave receives commands)
-    uint8_t init_cmd[2] = {0x00, 0x00};
-    lin_slave_register(0x02, 2, true, UART_NUM_1, false, 26, init_cmd, &actuator);
-    
-    // Start FSM
+    lin_slave_register(0x01, 4, true, UART_NUM_1, true,  26, default_buffer, &temp_ctx);
+    lin_slave_register(0x02, 2, true, UART_NUM_1, false, 26, default_buffer, &cmd_ctx);
     lin_slave_begin();
-    
-    // Create sensor update task
-    xTaskCreate(sensor_update_task, "sensor", 2048, NULL, 5, NULL);
-    
-    // Monitor received commands
-    while(1) {
+
+    while (1) {
+        // Update TX buffer before next master poll
         xSemaphoreTake(lin_slave_buffer_lock_1, portMAX_DELAY);
-        uint8_t cmd = actuator->buffer[0];
+        temp_ctx->buffer[0] = read_temperature();
         xSemaphoreGive(lin_slave_buffer_lock_1);
-        
-        if (cmd == 0xAA) {
-            ESP_LOGI("SLAVE", "Command received: Execute action");
-        }
-        
+
+        // Read last received command
+        xSemaphoreTake(lin_slave_buffer_lock_1, portMAX_DELAY);
+        uint8_t cmd = cmd_ctx->buffer[0];
+        xSemaphoreGive(lin_slave_buffer_lock_1);
+
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
@@ -312,142 +425,161 @@ void slave_task(void* pvParameters) {
 
 ### Dual Master-Slave Simulation (Single ESP32)
 ```c
-void app_main() {
-    // Master on UART1, GPIO 17
-    lin_master_init(true, 19200, 17, UART_NUM_1);
-    lin_slave_registry(0x12, 7, true, UART_NUM_1, 17);
-    lin_slave_registry(0x2A, 3, false, UART_NUM_1, 17);
-    lin_master_begin();
-    
-    // Slave on UART2, GPIO 26
-    lin_slave_context_t *rx_ctx, *tx_ctx;
-    lin_slave_init(true, 19200, 26, UART_NUM_2);
-    lin_slave_register(0x12, 7, true, UART_NUM_2, false, 26, default_buffer, &rx_ctx);
-    lin_slave_register(0x2A, 3, false, UART_NUM_2, true, 26, default_buffer, &tx_ctx);
-    lin_slave_begin();
-    
-    // Communication example
-    uint8_t master_tx_data[7] = {0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73};
-    lin_master_tx(0x12, master_tx_data);  // Master sends to slave
-    
-    uint8_t slave_tx_data[3] = {0xAB, 0xCD, 0xEF};
-    xSemaphoreTake(lin_slave_buffer_lock_2, portMAX_DELAY);
-    memcpy(tx_ctx->buffer, slave_tx_data, 3);
-    xSemaphoreGive(lin_slave_buffer_lock_2);
-    
-    uint8_t master_rx_data[3];
-    lin_master_rx(0x2A, master_rx_data);  // Master requests from slave
-}
+// From main.c — master on UART1 (GPIO17), slave on UART2 (GPIO26)
+// Connected externally: GPIO17 ↔ GPIO26
+
+lin_slave_context_t *rx_ctx, *tx_ctx;
+
+// Master setup
+lin_master_init(true, 19200, 17, UART_NUM_1);
+lin_slave_registry(0x12, 8, true, UART_NUM_1, 17);   // Master TX — 8 bytes
+lin_slave_registry(0x2A, 3, false, UART_NUM_1, 17);  // Master RX — 3 bytes
+lin_master_begin();
+
+// Slave setup
+lin_slave_init(true, 19200, 26, UART_NUM_2);
+lin_slave_register(0x12, 8, true, UART_NUM_2, false, 26, default_buffer, &rx_ctx);
+lin_slave_register(0x2A, 3, false, UART_NUM_2, true,  26, default_buffer, &tx_ctx);
+lin_slave_begin();
+
+// Master TX → Slave RX (ID 0x12, PID 0x92)
+uint8_t tx_data[8] = {0x13, 0x23, 0x33, 0x43, 0x53, 0x63, 0x73, 0x83};
+lin_master_tx(0x12, tx_data);
+
+// Master RX ← Slave TX (ID 0x2A, PID 0x6A)
+xSemaphoreTake(lin_slave_buffer_lock_2, portMAX_DELAY);
+uint8_t resp[3] = {0xAB, 0xCD, 0xEF};
+memcpy(tx_ctx->buffer, resp, 3);
+xSemaphoreGive(lin_slave_buffer_lock_2);
+
+uint8_t rx_data[3];
+lin_master_rx(0x2A, rx_data);
 ```
+
+---
 
 ## Error Handling
 
 ### Return Codes
+
 | Code | Description |
-|------|-------------|
+|---|---|
 | `ESP_OK` | Success |
-| `ESP_ERR_INVALID_ARG` | Invalid ID, length, or entry |
-| `ESP_ERR_TIMEOUT` | Mutex timeout or UART timeout |
-| `ESP_ERR_INVALID_STATE` | Not initialized or freeze state error |
-| `ESP_ERR_NO_MEM` | Registry overflow or mutex creation failure |
+| `ESP_ERR_INVALID_ARG` | Invalid ID, length, or unregistered entry |
+| `ESP_ERR_TIMEOUT` | Mutex or UART read timeout |
+| `ESP_ERR_INVALID_STATE` | Not initialized or registration freeze violation |
+| `ESP_ERR_NO_MEM` | Registry overflow or mutex allocation failure |
 | `ESP_ERR_INVALID_CRC` | Checksum mismatch (master RX only) |
-| `ESP_FAIL` | UART operation failure |
+| `ESP_FAIL` | UART driver failure |
 
-### Error Logging
-Enable ESP-IDF logging to monitor frame processing:
+### Logging
 ```c
-// In menuconfig
-Component config → Log output → Default log verbosity → Info
-
-// Runtime
 esp_log_level_set("LIN_MASTER", ESP_LOG_INFO);
-esp_log_level_set("LIN_SLAVE", ESP_LOG_INFO);
+esp_log_level_set("LIN_SLAVE",  ESP_LOG_INFO);
 ```
+
+---
 
 ## Performance
 
-### Frame Timing (19200 baud, 8-byte data)
-- **Frame Duration**: ~10ms (break + sync + PID + 8 data + checksum)
-- **CPU Usage**: 
-  - Master: <1% (blocking calls)
-  - Slave: ~2-5% per FSM task (event-driven)
-- **Memory**:
-  - Master: ~4KB RAM (slave table, mutex)
-  - Slave: ~6KB RAM per UART (context table, FSM task stack)
+### Frame Timing at 19200 Baud
 
-### Throughput
-- **Maximum Frame Rate**: ~80 frames/second @ 19200 baud (8-byte frames)
-- **Bus Utilization**: Configurable via task delays
-- **Latency**: <1ms from frame start to FSM processing
+At 19200 baud, one bit period = ~52.1 µs. One UART byte (1 start + 8 data + 1 stop) = ~520.8 µs.
+
+| Segment | Bytes | Calculated | Measured (PulseView) |
+|---|---|---|---|
+| Break field | 2 | ~1.04 ms | — |
+| Sync + PID | 2 | ~1.04 ms | — |
+| Data (8 bytes) | 8 | ~4.17 ms | — |
+| Checksum | 1 | ~0.52 ms | — |
+| **Full frame (8-byte)** | **13** | **~6.77 ms** | **~6.82 ms** |
+
+> Measured frame duration from waveform: 6824.96 µs (146.5 Hz). Inter-frame gap configured at 15 ms in `main.c`.
+
+- **Maximum frame rate** — ~80 frames/s at 19200 baud with 8-byte payload (bus time only)
+- **Master CPU** — <1% (blocking calls, mutex-gated)
+- **Slave CPU** — ~2–5% per FSM task (event-driven)
+- **Master RAM** — ~4 KB (slave table, mutex)
+- **Slave RAM** — ~6 KB per UART (context table, 4 KB FSM task stack)
+
+---
 
 ## Troubleshooting
 
-### Master TX Fails
-- **Check**: Mutex is not held by another task
-- **Verify**: Slave is powered and connected
-- **Confirm**: GPIO wiring is correct
+**Logic analyzer shows Frame Error on break bytes** — Expected. See [Break Field Implementation](#break-field-implementation).
 
-### Slave Does Not Respond
-- **Ensure**: `lin_slave_begin()` was called
-- **Verify**: Baud rate matches master
-- **Check**: GPIO wiring and LIN transceiver
+**Master TX returns `ESP_ERR_TIMEOUT`** — Mutex held by another task for >1 s. Verify no task is blocking indefinitely while holding `lin_mutex`.
 
-### Checksum Mismatch
-- **Verify**: Checksum type matches (enhanced vs classic)
-- **Check**: Bus noise and termination
-- **Confirm**: LIN transceiver is functioning
+**Slave does not respond** — Confirm `lin_slave_begin()` was called. Verify baud rate matches. Check that `direction = true` is set for the TX entry.
 
-### Data Corruption in Slave Buffer
-- **Ensure**: Mutex is taken before ALL buffer access
-- **Verify**: Correct mutex used (lock_1 vs lock_2)
-- **Check**: Buffer is not modified during frame transmission/reception
+**Checksum mismatch** — Confirm `checksum_type` matches on both master and slave for the same ID. IDs `0x3C–0x3F` always use classic checksum regardless of the registered type.
 
-## Compliance
+**Slave buffer contains stale data** — Always acquire the correct mutex before reading/writing. Verify `lin_slave_buffer_lock_1` vs `lin_slave_buffer_lock_2` matches the UART channel.
 
-### LIN Specification
-- **Standard**: LIN 2.0 / 2.1 / 2.2 Checksum Behavior
-- **Baud Rates**: 9600, 19200, 20000 (any UART-supported rate)
-- **Break Field**: Frame-layer break generation
-- **Sync Byte**: 0x55
-- **Checksum**: Classic (LIN 1.x compatible) & Enhanced (LIN 2.x)
-- **Diagnostic Frames**: IDs 0x3C-0x3F use classic checksum per spec
+**`UART_FRAME_ERR` events silently discarded** — Intentional for break field compatibility. If strict data-phase error detection is required, add a framing error counter inside the `UART_FRAME_ERR` case.
+
+---
 
 ## Limitations
 
+- Break field is a software approximation (2 × `0x00` bytes), not a spec-compliant LIN break
+- No hardware break detection on the slave; break is identified by counting two `0x00` bytes
 - Single master per UART channel
-- Maximum 64 slave entries per master
-- Maximum 64 registered IDs per slave
-- UART_NUM_0 not supported (reserved for ESP32 logging)
-- No automatic retransmission on errors
-- No schedule table management
+- Maximum 64 registered entries per master and per slave
+- `UART_NUM_0` not supported (reserved for ESP-IDF serial logging)
+- No automatic retransmission on error
+- No LIN schedule table management
 - No sleep/wakeup frame handling
+- No LIN 2.x node configuration services
+
+---
 
 ## Testing
 
-### Simulation Environment
-- **Platform**: Wokwi ESP32 simulator
-- **Test Configuration**: Single ESP32 with master on UART1 (GPIO17) and slave on UART2 (GPIO26)
-- **Validation**: Bidirectional frame exchange with checksum verification
+### Environment
 
-### Test Results
-- ✅ Master TX: 100% success rate
-- ✅ Master RX: 100% success rate
-- ✅ Slave RX: Correct data reception with checksum validation
-- ✅ Slave TX: Correct data transmission with checksum generation
-- ✅ PID parity: Verified across all IDs (0x00-0x3F)
-- ✅ Checksum: Both classic and enhanced validated
+| Item | Details |
+|---|---|
+| Simulation | Wokwi ESP32 (generates `.vcd` file) |
+| Board | NodeMCU-32S |
+| Framework | ESP-IDF via PlatformIO |
+| Logic Analyzer | PulseView (`.vcd` import, UART decoder) |
+| Master | UART1, GPIO17 |
+| Slave | UART2, GPIO26 |
+| Channels | D0 = LIN wire, D1 = RMT baud clock |
+
+### Validated Test Cases
+
+| Test | Result |
+|---|---|
+| Master TX — 8-byte frame, enhanced checksum (ID `0x12`, PID `0x92`) | ✅ |
+| Master RX — 3-byte frame, classic checksum (ID `0x2A`, PID `0x6A`) | ✅ |
+| Slave RX — data reception + checksum verification | ✅ |
+| Slave TX — buffer transmission + checksum generation | ✅ |
+| PID parity — all IDs `0x00`–`0x3F` | ✅ |
+| Checksum — both classic and enhanced | ✅ |
+| Thread safety — concurrent buffer access under mutex | ✅ |
+| Registration freeze — rejects calls after `begin()` | ✅ |
+
+---
+
+## Compliance
+
+| Aspect | Notes |
+|---|---|
+| Checksum | LIN 2.0 / 2.1 / 2.2A enhanced and classic |
+| Break field | Software approximation via 2 × `0x00` bytes; not spec-compliant (see [Break Field Implementation](#break-field-implementation)) |
+| Sync byte | `0x55` fixed |
+| PID parity | Per LIN 2.x specification |
+| Diagnostic frames | `0x3C–0x3F` always use classic checksum |
+
+---
 
 ## License
 
 This project is open-source. Users are free to modify and distribute as needed.
 
-## Contributing
-
-Contributions welcome! Please ensure:
-- Code follows ESP-IDF coding standards
-- All functions include error handling
-- Changes are tested on hardware
-- Documentation is updated
+---
 
 ## References
 
@@ -457,5 +589,6 @@ Contributions welcome! Please ensure:
 
 ---
 
-**Author**: Jayanth Sinnakavadi Balan  
-**Contact**: jayanthsb.005@gmail.com
+**Author:** Jayanth Sinnakavadi Balan  
+**Contact:** jayanthsb.005@gmail.com  
+**Repository:** [github.com/JayanthBalan/LIN-Protocol-Device-Driver](https://github.com/JayanthBalan/LIN-Protocol-Device-Driver.git)
