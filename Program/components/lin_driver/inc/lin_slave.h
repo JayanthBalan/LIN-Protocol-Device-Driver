@@ -34,7 +34,7 @@ extern uint8_t default_buffer[]; //8 * 0xff
 extern SemaphoreHandle_t lin_slave_buffer_lock_1;
 extern SemaphoreHandle_t lin_slave_buffer_lock_2;
 
-esp_err_t lin_slave_init(bool, uint16_t, uint8_t, uart_port_t);
+esp_err_t lin_slave_init(bool, uint32_t, uint8_t, uart_port_t);
 esp_err_t lin_slave_register(uint8_t, uint8_t, bool, uart_port_t, bool, uint8_t, uint8_t[], lin_slave_context_t**);
 void lin_slave_begin(void);
 
