@@ -16,7 +16,7 @@ I (184) app_init: Application information:
 I (184) app_init: Project name:     Trigrams
 I (187) app_init: App version:      1
 I (191) app_init: Compile time:     Mar  2 2026 16:29:04
-I (196) app_init: ELF file SHA256:  6de093b73...
+I (196) app_init: ELF file SHA256:  d134029a4...
 I (200) app_init: ESP-IDF:          5.5.0
 I (204) efuse_init: Min chip rev:     v0.0
 I (208) efuse_init: Max chip rev:     v3.99 
@@ -25,7 +25,7 @@ I (216) heap_init: Initializing. RAM available for dynamic allocation:
 I (222) heap_init: At 3FFAE6E0 len 00001920 (6 KiB): DRAM
 I (227) heap_init: At 3FFB3850 len 0002C7B0 (177 KiB): DRAM
 I (232) heap_init: At 3FFE0440 len 00003AE0 (14 KiB): D/IRAM
-I (237) heap_init: At 3FFE4350 len 0001BCB0 (111 KiB): D/IRAM
+I (238) heap_init: At 3FFE4350 len 0001BCB0 (111 KiB): D/IRAM
 I (243) heap_init: At 4008EDF4 len 0001120C (68 KiB): IRAM
 I (250) spi_flash: detected chip: gd
 I (252) spi_flash: flash io: dio
@@ -43,95 +43,52 @@ I (296) LIN_SLAVE: UART2 FSM Started
 I (296) LIN_SLAVE: Operational
 I (296) MAIN: Slave: Buffer Prepped for TX via 0x2A
 I (306) MAIN: Master: Transmitted Data for PID 0x12
-I (316) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (316) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
+I (316) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73 83
 I (326) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (326) MAIN: Master: Transmitted Data for PID 0x12
 I (336) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (336) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
-I (346) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (346) MAIN: Master: Transmitted Data for PID 0x12
+I (346) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73 83
 I (356) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (356) MAIN: Master: Received Data for PID 0x2A: AB CD EF
 I (366) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (366) MAIN: Master: Transmitted Data for PID 0x12
-I (376) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (376) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
+I (376) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73 83
 I (386) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (386) MAIN: Master: Transmitted Data for PID 0x12
 I (396) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (396) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
-I (406) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (406) MAIN: Master: Transmitted Data for PID 0x12
+I (406) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73 83
+E (416) LIN_MASTER: Data reception failed: expected 3, got 2
 I (416) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (416) MAIN: Master: Received Data for PID 0x2A: AB CD EF
+E (416) MAIN: Master: Reception Failed for PID 0x2A : ESP_FAIL
 I (426) MAIN: Slave: Buffer Prepped for TX via 0x2A
 I (426) MAIN: Master: Transmitted Data for PID 0x12
-I (436) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
+I (436) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73 83
 I (436) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
 I (446) MAIN: Slave: Buffer Prepped for TX via 0x2A
+I (446) MAIN: Master: Transmitted Data for PID 0x12
 I (456) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (456) MAIN: Master: Transmitted Data for PID 0x12
-I (466) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (466) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
+I (456) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
+I (466) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73 83
+I (466) MAIN: Master: Transmitted Data for PID 0x12
 I (476) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (476) MAIN: Master: Transmitted Data for PID 0x12
+I (476) MAIN: Master: Received Data for PID 0x2A: AB CD EF
 I (486) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (486) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
-I (496) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (496) MAIN: Master: Transmitted Data for PID 0x12
+I (486) MAIN: Master: Transmitted Data for PID 0x12
+I (496) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73 83
+I (496) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
 I (506) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (506) MAIN: Master: Received Data for PID 0x2A: AB CD EF
+I (506) MAIN: Master: Transmitted Data for PID 0x12
 I (516) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (516) MAIN: Master: Transmitted Data for PID 0x12
-I (526) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (526) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
+I (516) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
+I (526) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73 83
+I (526) MAIN: Master: Transmitted Data for PID 0x12
 I (536) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (536) MAIN: Master: Transmitted Data for PID 0x12
+I (536) MAIN: Master: Received Data for PID 0x2A: AB CD EF
 I (546) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (546) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
-I (556) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (556) MAIN: Master: Transmitted Data for PID 0x12
+I (546) MAIN: Master: Transmitted Data for PID 0x12
+I (556) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73 83
+I (556) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
 I (566) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (566) MAIN: Master: Received Data for PID 0x2A: AB CD EF
+I (566) MAIN: Master: Transmitted Data for PID 0x12
 I (576) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (576) MAIN: Master: Transmitted Data for PID 0x12
-I (586) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (586) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
+I (576) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
+I (586) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73 83
+I (586) MAIN: Master: Transmitted Data for PID 0x12
 I (596) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (596) MAIN: Master: Transmitted Data for PID 0x12
-I (606) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (606) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
-I (616) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (616) MAIN: Master: Transmitted Data for PID 0x12
-I (626) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (626) MAIN: Master: Received Data for PID 0x2A: AB CD EF
-I (636) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (636) MAIN: Master: Transmitted Data for PID 0x12
-I (646) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (646) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
-I (656) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (656) MAIN: Master: Transmitted Data for PID 0x12
-I (666) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (666) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
-I (676) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (676) MAIN: Master: Transmitted Data for PID 0x12
-I (686) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (686) MAIN: Master: Received Data for PID 0x2A: AB CD EF
-I (696) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (696) MAIN: Master: Transmitted Data for PID 0x12
-I (706) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (706) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
-I (716) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (716) MAIN: Master: Transmitted Data for PID 0x12
-I (726) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (726) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
-I (736) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (736) MAIN: Master: Transmitted Data for PID 0x12
-I (746) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (746) MAIN: Master: Received Data for PID 0x2A: AB CD EF
-I (756) MAIN: Slave: Buffer Prepped for TX via 0x2A
-I (756) MAIN: Master: Transmitted Data for PID 0x12
-I (766) MAIN: Slave: Buffer Updated from RX via 0x12: 13 23 33 43 53 63 73
-I (766) MAIN: Master: Received Data for PID 0x2A: A1 B2 C3
-I (776)
+I (596) MAIN: Master: Received
